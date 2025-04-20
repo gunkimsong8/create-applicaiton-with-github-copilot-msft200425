@@ -1,103 +1,165 @@
-import Image from "next/image";
+"use client";
+
+import { useState } from "react";
+import BookSearch from "@/components/BookSearch";
+import BookResults from "@/components/BookResults";
+import { Book, books } from "@/data/books";
+import { conceptMapping } from "@/data/concepts";
 
 export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm/6 text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-[family-name:var(--font-geist-mono)] font-semibold">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [matchedBooks, setMatchedBooks] = useState<Book[]>([]);
+  const [hasSearched, setHasSearched] = useState<boolean>(false);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [searchMode, setSearchMode] = useState<"concept" | "ai">("concept");
+  const [error, setError] = useState<string | null>(null);
+  const [aiThoughts, setAiThoughts] = useState<string | null>(null);
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
-        </div>
+  // Function to search using our concept mapping (client-side approach)
+  const handleConceptSearch = (query: string) => {
+    if (!query.trim()) {
+      setMatchedBooks([]);
+      return;
+    }
+
+    // Convert query to lowercase and split into individual words
+    const queryTerms = query.toLowerCase().split(/\s+/).filter(term => term.length > 0);
+    
+    // Expand search terms to include related concepts and synonyms
+    const expandedQueryTerms = new Set<string>();
+    
+    // Add original terms first
+    queryTerms.forEach(term => expandedQueryTerms.add(term));
+    
+    // Add related concepts for each query term
+    queryTerms.forEach(term => {
+      // Check if this term has mapped concepts
+      Object.entries(conceptMapping).forEach(([concept, relatedTerms]) => {
+        // If concept contains or is contained in the query term
+        if (concept.includes(term) || term.includes(concept)) {
+          // Add the concept and all its related terms
+          expandedQueryTerms.add(concept);
+          relatedTerms.forEach(relatedTerm => expandedQueryTerms.add(relatedTerm));
+        }
+      });
+    });
+    
+    console.log('Original search terms:', queryTerms);
+    console.log('Expanded search terms:', [...expandedQueryTerms]);
+    
+    // Find books that match any of the expanded query terms
+    const results = books.filter(book => {
+      return [...expandedQueryTerms].some(term => 
+        book.tags.some(tag => tag.toLowerCase().includes(term.toLowerCase()))
+      );
+    });
+    
+    setMatchedBooks(results);
+  };
+
+  // Function to search using OpenAI (server-side AI approach)
+  const handleAiSearch = async (query: string) => {
+    setIsLoading(true);
+    setError(null);
+    
+    try {
+      const response = await fetch('/api/search', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ query }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to get AI recommendations');
+      }
+
+      const data = await response.json();
+      setMatchedBooks(data.books);
+      
+      // Log AI thoughts to console for debugging
+      if (data.aiThoughts) {
+        console.log('AI Thought Process:', data.aiThoughts);
+        setAiThoughts(data.aiThoughts);
+      }
+      
+    } catch (err) {
+      console.error('Error fetching AI recommendations:', err);
+      setError(err instanceof Error ? err.message : 'An error occurred during AI search');
+      setMatchedBooks([]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Main search handler that delegates to the appropriate search method
+  const handleSearch = async (query: string) => {
+    setSearchQuery(query);
+    setHasSearched(true);
+    setAiThoughts(null); // Reset AI thoughts when starting a new search
+    
+    if (!query.trim()) {
+      setMatchedBooks([]);
+      return;
+    }
+
+    if (searchMode === 'ai') {
+      await handleAiSearch(query);
+    } else {
+      handleConceptSearch(query);
+    }
+  };
+
+  return (
+    <div className="flex flex-col items-center min-h-screen p-8">
+      <main className="max-w-3xl w-full mx-auto mt-10 mb-20">
+        <h1 className="text-3xl font-bold text-center mb-8">AI Book Recommender</h1>
+        <p className="text-center mb-8 text-gray-600">
+          Tell us how you're feeling or what mood you're in, and we'll recommend some books for you.
+        </p>
+        
+        <BookSearch 
+          onSearch={handleSearch} 
+          searchMode={searchMode}
+          onSearchModeChange={setSearchMode}
+          isLoading={isLoading}
+        />
+        
+        {error && (
+          <div className="mt-4 p-4 bg-red-100 text-red-700 rounded-md">
+            <p><strong>Error:</strong> {error}</p>
+            <p className="mt-2 text-sm">
+              Note: To use AI search, you need to set up an OpenAI API key in the .env.local file.
+            </p>
+          </div>
+        )}
+        
+        {hasSearched && (
+          <BookResults 
+            books={matchedBooks} 
+            searchQuery={searchQuery} 
+            isAiPowered={searchMode === 'ai'} 
+            isLoading={isLoading}
+          />
+        )}
+        
+        {/* Display AI Thoughts */}
+        {aiThoughts && searchMode === 'ai' && !isLoading && (
+          <div className="mt-8 p-4 bg-gray-50 border rounded-lg">
+            <h3 className="text-lg font-semibold mb-2 flex items-center">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5 mr-2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 18v-5.25m0 0a6.01 6.01 0 001.5-.189m-1.5.189a6.01 6.01 0 01-1.5-.189m3.75 7.478a12.06 12.06 0 01-4.5 0m3.75 2.383a14.406 14.406 0 01-3 0M14.25 18v-.192c0-.983.658-1.823 1.508-2.316a7.5 7.5 0 10-7.517 0c.85.493 1.509 1.333 1.509 2.316V18" />
+              </svg>
+              AI Thought Process
+            </h3>
+            <div className="text-sm text-gray-700 whitespace-pre-wrap">
+              {aiThoughts}
+            </div>
+          </div>
+        )}
       </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
     </div>
   );
 }
